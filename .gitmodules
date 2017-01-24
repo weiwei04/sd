@@ -1,0 +1,6 @@
+[submodule "vendor/github.com/hashicorp/consul"]
+	path = vendor/github.com/hashicorp/consul
+	url = https://github.com/hashicorp/consul.git
+[submodule "vendor/github.com/cenkalti/backoff"]
+	path = vendor/github.com/cenkalti/backoff
+	url = https://github.com/cenkalti/backoff.git
