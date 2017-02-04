@@ -21,6 +21,59 @@ func Test_syncOnce(t *testing.T) {
 		syncInterval: 1 * time.Second,
 	}
 
+	balancer.listServicesFn = func() ([]string, uint64, error) {
+		return []string{"service0"}, 1, nil
+	}
+	balancer.listServiceEndpointsFn = func(name string) ([]Endpoint, uint64, error) {
+		return []Endpoint{Endpoint{Addr: "10.8.0.1", Port: 5600}, Endpoint{Addr: "10.8.0.2", Port: 5600}},
+			1, nil
+	}
+
+	exist := balancer.Exist("service0")
+	if exist {
+		t.Errorf("invalid result, expected[endpoint not found]")
+	}
+
+	_, err := balancer.Next("service0")
+	if err == nil {
+		t.Errorf("invalid result, expected[endpoint not found]")
+	}
+
+	newIndex := balancer.syncOnce(0)
+	if newIndex != 1 {
+		t.Errorf("invalid result")
+	}
+	exist = balancer.Exist("service0")
+	if !exist {
+		t.Errorf("endpoint not found")
+	}
+
+	balancer.listServicesFn = func() ([]string, uint64, error) {
+		return []string{}, 2, nil
+	}
+	newIndex = balancer.syncOnce(newIndex)
+	if newIndex != 2 {
+		t.Errorf("invalid result")
+	}
+	exist = balancer.Exist("service0")
+	if exist {
+		t.Errorf("stale result")
+	}
+}
+
+func Test_syncLoop(t *testing.T) {
+	stopCh := make(chan struct{})
+
+	balancer := &roundRobin{
+		stopCh:   stopCh,
+		services: make(map[string]*service),
+		client: newConsulClient(RoundRobinConfig{
+			Region: "dc1",
+			Addrs:  []string{"127.0.0.1:8500"},
+		}),
+		syncInterval: 1 * time.Second,
+	}
+
 	var namesIndex uint64 = 0
 	balancer.listServicesFn = func() ([]string, uint64, error) {
 		namesIndex++
