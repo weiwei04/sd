@@ -21,8 +21,8 @@ func Test_syncOnce(t *testing.T) {
 		syncInterval: 1 * time.Second,
 	}
 
-	balancer.listServicesFn = func() ([]string, uint64, error) {
-		return []string{"service0"}, 1, nil
+	balancer.listServicesFn = func() (map[string]struct{}, uint64, error) {
+		return map[string]struct{}{"service0": struct{}{}}, 1, nil
 	}
 	balancer.listServiceEndpointsFn = func(name string) ([]Endpoint, uint64, error) {
 		return []Endpoint{Endpoint{Addr: "10.8.0.1", Port: 5600}, Endpoint{Addr: "10.8.0.2", Port: 5600}},
@@ -39,7 +39,7 @@ func Test_syncOnce(t *testing.T) {
 		t.Errorf("invalid result, expected[endpoint not found]")
 	}
 
-	newIndex := balancer.syncOnce(0)
+	newNames, newIndex := balancer.syncOnce(map[string]struct{}{}, 0)
 	if newIndex != 1 {
 		t.Errorf("invalid result")
 	}
@@ -48,10 +48,10 @@ func Test_syncOnce(t *testing.T) {
 		t.Errorf("endpoint not found")
 	}
 
-	balancer.listServicesFn = func() ([]string, uint64, error) {
-		return []string{}, 2, nil
+	balancer.listServicesFn = func() (map[string]struct{}, uint64, error) {
+		return map[string]struct{}{}, 2, nil
 	}
-	newIndex = balancer.syncOnce(newIndex)
+	newNames, newIndex = balancer.syncOnce(newNames, newIndex)
 	if newIndex != 2 {
 		t.Errorf("invalid result")
 	}
@@ -75,9 +75,9 @@ func Test_syncLoop(t *testing.T) {
 	}
 
 	var namesIndex uint64 = 0
-	balancer.listServicesFn = func() ([]string, uint64, error) {
+	balancer.listServicesFn = func() (map[string]struct{}, uint64, error) {
 		namesIndex++
-		return []string{"service0"}, namesIndex, nil
+		return map[string]struct{}{"service0": struct{}{}}, namesIndex, nil
 	}
 	var endpointsIndex uint64 = 0
 	balancer.listServiceEndpointsFn = func(name string) ([]Endpoint, uint64, error) {

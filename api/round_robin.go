@@ -41,9 +41,11 @@ type service struct {
 //	return s.endpoints[s.idx], nil
 //}
 
+//type set map[string]struct{}
+
 type roundRobin struct {
 	stopCh                 <-chan struct{}
-	listServicesFn         func() ([]string, uint64, error)
+	listServicesFn         func() (map[string]struct{}, uint64, error)
 	listServiceEndpointsFn func(service string) ([]Endpoint, uint64, error)
 
 	client *consulClient
@@ -72,24 +74,26 @@ func (r *roundRobin) Next(name string) (Endpoint, error) {
 	return service.endpoints[index], nil
 }
 
-func (r *roundRobin) syncOnce(lastIndex uint64) uint64 {
-	names, newIndex, err := r.listServicesFn()
+func (r *roundRobin) syncOnce(lastNames map[string]struct{}, lastIndex uint64) (map[string]struct{}, uint64) {
+	newNames, newIndex, err := r.listServicesFn()
 	if err != nil {
-		return lastIndex
+		return lastNames, lastIndex
 	}
 
 	changed := false
-	if lastIndex != newIndex {
+	if lastIndex < newIndex {
 		changed = true
+	} else {
+		newNames = lastNames
 	}
 
-	services := make(map[string]struct{})
-	for _, name := range names {
-		if changed {
-			services[name] = struct{}{}
-		}
+	for name := range newNames {
 		endpoints, eIndex, err := r.listServiceEndpointsFn(name)
 		if err != nil {
+			continue
+		}
+		if len(endpoints) == 0 {
+			// TODO: if len(endpoints) == 0 queue a async listServiceEndpoints call
 			continue
 		}
 		old, ok := r.services[name]
@@ -97,10 +101,9 @@ func (r *roundRobin) syncOnce(lastIndex uint64) uint64 {
 			// TODO: random a index
 			old = &service{}
 		}
-		if eIndex == old.lastIndex {
+		if eIndex <= old.lastIndex {
 			continue
 		}
-		// TODO: if len(endpoints) == 0 retry asap
 		sort.Sort(sortable(endpoints))
 		index := atomic.LoadUint32(&old.index)
 		new := &service{
@@ -114,11 +117,11 @@ func (r *roundRobin) syncOnce(lastIndex uint64) uint64 {
 	}
 
 	if !changed {
-		return newIndex
+		return newNames, newIndex
 	}
 
 	for name := range r.services {
-		_, ok := services[name]
+		_, ok := newNames[name]
 		if !ok {
 			r.mutex.Lock()
 			delete(r.services, name)
@@ -126,11 +129,12 @@ func (r *roundRobin) syncOnce(lastIndex uint64) uint64 {
 		}
 	}
 
-	return newIndex
+	return newNames, newIndex
 }
 
 func (r *roundRobin) syncLoop() {
 	var lastIndex uint64
+	lastNames := make(map[string]struct{})
 
 	ticker := time.NewTicker(r.syncInterval)
 	defer ticker.Stop()
@@ -142,6 +146,6 @@ func (r *roundRobin) syncLoop() {
 		case <-ticker.C:
 			break
 		}
-		lastIndex = r.syncOnce(lastIndex)
+		lastNames, lastIndex = r.syncOnce(lastNames, lastIndex)
 	}
 }

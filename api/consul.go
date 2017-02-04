@@ -75,7 +75,7 @@ func (c *consulClient) next() *consul.Client {
 	return c.clients[index%c.count]
 }
 
-func (c *consulClient) listServices() ([]string, uint64, error) {
+func (c *consulClient) listServices() (map[string]struct{}, uint64, error) {
 	client := c.next()
 	services, meta, err :=
 		client.Catalog().Services(&consul.QueryOptions{
@@ -84,11 +84,11 @@ func (c *consulClient) listServices() ([]string, uint64, error) {
 			RequireConsistent: false,
 		})
 	if err != nil {
-		return []string{}, 0, err
+		return map[string]struct{}{}, 0, err
 	}
-	names := make([]string, 0, len(services))
+	names := make(map[string]struct{})
 	for name := range services {
-		names = append(names, name)
+		names[name] = struct{}{}
 	}
 	return names, meta.LastIndex, nil
 }
