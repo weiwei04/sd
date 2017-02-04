@@ -71,7 +71,7 @@ func Test_syncLoop(t *testing.T) {
 			Region: "dc1",
 			Addrs:  []string{"127.0.0.1:8500"},
 		}),
-		syncInterval: 1 * time.Second,
+		syncInterval: 100 * time.Millisecond,
 	}
 
 	var namesIndex uint64 = 0
@@ -151,7 +151,7 @@ func Test_RoundRobin(t *testing.T) {
 	balancer := NewRoundRobin(RoundRobinConfig{
 		Region:       "dc1",
 		Addrs:        []string{srv.HTTPAddr},
-		SyncInterval: 1 * time.Second,
+		SyncInterval: 100 * time.Millisecond,
 	}, stopCh)
 
 	// wait for first sync
