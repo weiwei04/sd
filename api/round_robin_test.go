@@ -3,6 +3,9 @@ package api
 import (
 	"testing"
 	"time"
+
+	"github.com/hashicorp/consul/consul/structs"
+	"github.com/hashicorp/consul/testutil"
 )
 
 func Test_syncOnce(t *testing.T) {
@@ -11,7 +14,11 @@ func Test_syncOnce(t *testing.T) {
 	balancer := &roundRobin{
 		stopCh:   stopCh,
 		services: make(map[string]*service),
-		client:   newConsulClient(RoundRobinConfig{}),
+		client: newConsulClient(RoundRobinConfig{
+			Region:                "dc1",
+			Addrs:                 []string{"127.0.0.1:8500"},
+			DialTimeout:           5 * time.Second,
+			ResponseHeaderTimeout: 10 * time.Second}),
 	}
 
 	var namesIndex uint64 = 0
@@ -74,5 +81,52 @@ func Test_syncOnce(t *testing.T) {
 	}
 	if counts[endpoint0.String()]-counts[endpoint1.String()] > 1 {
 		t.Errorf("unexpected balance result")
+	}
+}
+
+func Test_RoundRobin(t *testing.T) {
+	srv := testutil.NewTestServer(t)
+	defer srv.Stop()
+
+	// populate test data
+	//for i := 0; i < 10; i++ {
+	//id := fmt.Sprintf("service0:%d", i)
+	srv.AddService("service0", structs.HealthPassing, []string{"HTTP"})
+	//}
+
+	stopCh := make(chan struct{})
+	balancer := NewRoundRobin(RoundRobinConfig{
+		Region:                "dc1",
+		Addrs:                 []string{srv.HTTPAddr},
+		DialTimeout:           5 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+	}, stopCh)
+
+	// wait for first sync
+	time.Sleep(3 * time.Second)
+
+	exist := balancer.Exist("service0")
+	if !exist {
+		t.Errorf("endpoint not found")
+	}
+
+	counts := make(map[string]int)
+	for i := 0; i < 1000; i++ {
+		endpoint, err := balancer.Next("service0")
+		if err != nil {
+			t.Errorf("endpoint not found")
+		} else {
+			counts[endpoint.String()] = counts[endpoint.String()] + 1
+		}
+	}
+	close(stopCh)
+
+	if len(counts) != 1 {
+		t.Errorf("invalid balance result, expected 10 endpoints, got %d", len(counts))
+	}
+	for _, v := range counts {
+		if v-1000 > 0 {
+			t.Errorf("invalid balance result")
+		}
 	}
 }
