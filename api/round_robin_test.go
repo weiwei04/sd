@@ -15,10 +15,10 @@ func Test_syncOnce(t *testing.T) {
 		stopCh:   stopCh,
 		services: make(map[string]*service),
 		client: newConsulClient(RoundRobinConfig{
-			Region:                "dc1",
-			Addrs:                 []string{"127.0.0.1:8500"},
-			DialTimeout:           5 * time.Second,
-			ResponseHeaderTimeout: 10 * time.Second}),
+			Region: "dc1",
+			Addrs:  []string{"127.0.0.1:8500"},
+		}),
+		syncInterval: 1 * time.Second,
 	}
 
 	var namesIndex uint64 = 0
@@ -96,10 +96,9 @@ func Test_RoundRobin(t *testing.T) {
 
 	stopCh := make(chan struct{})
 	balancer := NewRoundRobin(RoundRobinConfig{
-		Region:                "dc1",
-		Addrs:                 []string{srv.HTTPAddr},
-		DialTimeout:           5 * time.Second,
-		ResponseHeaderTimeout: 10 * time.Second,
+		Region:       "dc1",
+		Addrs:        []string{srv.HTTPAddr},
+		SyncInterval: 1 * time.Second,
 	}, stopCh)
 
 	// wait for first sync

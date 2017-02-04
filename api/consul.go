@@ -13,18 +13,26 @@ import (
 type RoundRobinConfig struct {
 	Region                string
 	Addrs                 []string
+	SyncInterval          time.Duration
 	DialTimeout           time.Duration
 	ResponseHeaderTimeout time.Duration
 }
 
-func (c RoundRobinConfig) validate() bool {
+func (c *RoundRobinConfig) normalize() error {
 	if c.Region == "" ||
-		len(c.Addrs) == 0 ||
-		c.DialTimeout == 0 ||
-		c.ResponseHeaderTimeout == 0 {
-		return false
+		len(c.Addrs) == 0 {
+		return fmt.Errorf("empty region or addrs")
 	}
-	return true
+	if c.SyncInterval == 0 {
+		c.SyncInterval = 30 * time.Second
+	}
+	if c.DialTimeout == 0 {
+		c.DialTimeout = 3 * time.Second
+	}
+	if c.ResponseHeaderTimeout == 0 {
+		c.ResponseHeaderTimeout = 10 * time.Second
+	}
+	return nil
 }
 
 type consulClient struct {
@@ -35,9 +43,6 @@ type consulClient struct {
 }
 
 func newConsulClient(config RoundRobinConfig) *consulClient {
-	if !config.validate() {
-		panic(fmt.Sprintf("invalid config"))
-	}
 	clients := make([]*consul.Client, len(config.Addrs), len(config.Addrs))
 	for i, addr := range config.Addrs {
 		config := consul.Config{

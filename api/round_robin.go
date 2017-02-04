@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -8,10 +9,15 @@ import (
 )
 
 func NewRoundRobin(config RoundRobinConfig, stopCh <-chan struct{}) Balancer {
+	err := config.normalize()
+	if err != nil {
+		panic(fmt.Sprintf("invalid config"))
+	}
 	balancer := &roundRobin{
-		stopCh:   stopCh,
-		services: make(map[string]*service),
-		client:   newConsulClient(config),
+		stopCh:       stopCh,
+		services:     make(map[string]*service),
+		client:       newConsulClient(config),
+		syncInterval: config.SyncInterval,
 	}
 
 	balancer.listServicesFn = balancer.client.listServices
@@ -41,6 +47,8 @@ type roundRobin struct {
 	listServiceEndpointsFn func(service string) ([]Endpoint, uint64, error)
 
 	client *consulClient
+
+	syncInterval time.Duration
 
 	services map[string]*service
 	mutex    sync.RWMutex
@@ -124,7 +132,7 @@ func (r *roundRobin) syncOnce(lastIndex uint64) uint64 {
 func (r *roundRobin) syncLoop() {
 	var lastIndex uint64
 
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(r.syncInterval)
 	defer ticker.Stop()
 
 	for {
