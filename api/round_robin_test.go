@@ -9,16 +9,15 @@ import (
 )
 
 func Test_syncOnce(t *testing.T) {
-	stopCh := make(chan struct{})
-
 	balancer := &roundRobin{
-		stopCh:   stopCh,
+		stopCh:   make(chan struct{}),
 		services: make(map[string]*service),
 		client: newConsulClient(RoundRobinConfig{
 			Region: "dc1",
 			Addrs:  []string{"127.0.0.1:8500"},
 		}),
 		syncInterval: 1 * time.Second,
+		logger:       logger{},
 	}
 
 	balancer.listServicesFn = func() (map[string]struct{}, uint64, error) {
@@ -62,16 +61,16 @@ func Test_syncOnce(t *testing.T) {
 }
 
 func Test_syncLoop(t *testing.T) {
-	stopCh := make(chan struct{})
 
 	balancer := &roundRobin{
-		stopCh:   stopCh,
+		stopCh:   make(chan struct{}),
 		services: make(map[string]*service),
 		client: newConsulClient(RoundRobinConfig{
 			Region: "dc1",
 			Addrs:  []string{"127.0.0.1:8500"},
 		}),
 		syncInterval: 100 * time.Millisecond,
+		logger:       logger{},
 	}
 
 	var namesIndex uint64 = 0
@@ -96,7 +95,9 @@ func Test_syncLoop(t *testing.T) {
 		t.Errorf("invalid result, expected[endpoint not found]")
 	}
 
-	go balancer.syncLoop()
+	balancer.Start()
+	defer balancer.Stop()
+
 	time.Sleep(3 * time.Second)
 
 	exist = balancer.Exist("service0")
@@ -124,8 +125,6 @@ func Test_syncLoop(t *testing.T) {
 		counts[e.String()] = counts[e.String()] + 1
 	}
 
-	close(stopCh)
-
 	if counts[endpoint0.String()] == 0 {
 		t.Errorf("endpoint not found")
 	}
@@ -133,7 +132,7 @@ func Test_syncLoop(t *testing.T) {
 		t.Errorf("endpoint not found")
 	}
 	if counts[endpoint0.String()]-counts[endpoint1.String()] > 1 {
-		t.Errorf("unexpected balance result")
+		t.Errorf("unexpected balance result, diff[%d]", counts[endpoint0.String()]-counts[endpoint1.String()])
 	}
 }
 
@@ -147,13 +146,13 @@ func Test_RoundRobin(t *testing.T) {
 	srv.AddService("service0", structs.HealthPassing, []string{"HTTP"})
 	//}
 
-	stopCh := make(chan struct{})
 	balancer := NewRoundRobin(RoundRobinConfig{
 		Region:       "dc1",
 		Addrs:        []string{srv.HTTPAddr},
 		SyncInterval: 100 * time.Millisecond,
-	}, stopCh)
-
+	})
+	balancer.Start()
+	defer balancer.Stop()
 	// wait for first sync
 	time.Sleep(3 * time.Second)
 
@@ -171,7 +170,6 @@ func Test_RoundRobin(t *testing.T) {
 			counts[endpoint.String()] = counts[endpoint.String()] + 1
 		}
 	}
-	close(stopCh)
 
 	if len(counts) != 1 {
 		t.Errorf("invalid balance result, expected 10 endpoints, got %d", len(counts))

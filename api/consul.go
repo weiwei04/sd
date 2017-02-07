@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -16,6 +17,7 @@ type RoundRobinConfig struct {
 	SyncInterval          time.Duration
 	DialTimeout           time.Duration
 	ResponseHeaderTimeout time.Duration
+	Logger                Logger
 }
 
 func (c *RoundRobinConfig) normalize() error {
@@ -32,6 +34,9 @@ func (c *RoundRobinConfig) normalize() error {
 	if c.ResponseHeaderTimeout == 0 {
 		c.ResponseHeaderTimeout = 10 * time.Second
 	}
+	if c.Logger == nil {
+		c.Logger = logger{}
+	}
 	return nil
 }
 
@@ -40,6 +45,7 @@ type consulClient struct {
 	count   uint32
 	index   uint32
 	region  string
+	//logger  Logger
 }
 
 func newConsulClient(config RoundRobinConfig) *consulClient {
@@ -76,6 +82,7 @@ func (c *consulClient) next() *consul.Client {
 }
 
 func (c *consulClient) listServices() (map[string]struct{}, uint64, error) {
+	// TODO: add backoff retry
 	client := c.next()
 	services, meta, err :=
 		client.Catalog().Services(&consul.QueryOptions{
@@ -88,12 +95,17 @@ func (c *consulClient) listServices() (map[string]struct{}, uint64, error) {
 	}
 	names := make(map[string]struct{})
 	for name := range services {
+		if strings.HasPrefix(name, "boots") ||
+			name == "consul" || name == "mesos" {
+			continue
+		}
 		names[name] = struct{}{}
 	}
 	return names, meta.LastIndex, nil
 }
 
 func (c *consulClient) listServiceEndpoints(name string) ([]Endpoint, uint64, error) {
+	// TODO: add backoff retry
 	client := c.next()
 	entries, meta, err :=
 		client.Health().Service(name, "HTTP", true, &consul.QueryOptions{

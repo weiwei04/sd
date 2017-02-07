@@ -8,22 +8,22 @@ import (
 	"time"
 )
 
-func NewRoundRobin(config RoundRobinConfig, stopCh <-chan struct{}) Balancer {
+func NewRoundRobin(config RoundRobinConfig) Balancer {
 	err := config.normalize()
 	if err != nil {
 		panic(fmt.Sprintf("invalid config"))
 	}
 	balancer := &roundRobin{
-		stopCh:       stopCh,
+		stopCh:       make(chan struct{}),
 		services:     make(map[string]*service),
 		client:       newConsulClient(config),
 		syncInterval: config.SyncInterval,
+		logger:       config.Logger,
 	}
 
 	balancer.listServicesFn = balancer.client.listServices
 	balancer.listServiceEndpointsFn = balancer.client.listServiceEndpoints
 
-	go balancer.syncLoop()
 	return balancer
 }
 
@@ -44,7 +44,9 @@ type service struct {
 //type set map[string]struct{}
 
 type roundRobin struct {
-	stopCh                 <-chan struct{}
+	stopCh chan struct{}
+	wg     sync.WaitGroup
+
 	listServicesFn         func() (map[string]struct{}, uint64, error)
 	listServiceEndpointsFn func(service string) ([]Endpoint, uint64, error)
 
@@ -54,6 +56,8 @@ type roundRobin struct {
 
 	services map[string]*service
 	mutex    sync.RWMutex
+
+	logger Logger
 }
 
 func (r *roundRobin) Exist(name string) bool {
@@ -74,9 +78,22 @@ func (r *roundRobin) Next(name string) (Endpoint, error) {
 	return service.endpoints[index], nil
 }
 
+func (r *roundRobin) Start() {
+	r.wg.Add(1)
+	go r.syncLoop()
+	r.logger.Infof("RoundRobin Balancer Background Sync Started, SyncInterval[%s]", r.syncInterval.String())
+}
+
+func (r *roundRobin) Stop() {
+	close(r.stopCh)
+	r.wg.Wait()
+	r.logger.Infof("RoundRobin Balancer Background Sync Stopped")
+}
+
 func (r *roundRobin) syncOnce(lastNames map[string]struct{}, lastIndex uint64) (map[string]struct{}, uint64) {
 	newNames, newIndex, err := r.listServicesFn()
 	if err != nil {
+		r.logger.Warningf("RoundRobin Balancer ListServices failed, err[%s]", err.Error())
 		return lastNames, lastIndex
 	}
 
@@ -90,9 +107,11 @@ func (r *roundRobin) syncOnce(lastNames map[string]struct{}, lastIndex uint64) (
 	for name := range newNames {
 		endpoints, eIndex, err := r.listServiceEndpointsFn(name)
 		if err != nil {
+			r.logger.Warningf("RoundRobin Balancer ListServiceEndpoints(%s) failed, err[%s]", name, err.Error())
 			continue
 		}
 		if len(endpoints) == 0 {
+			r.logger.Debugf("RoundRobin Balancer ignore empty endpoints set")
 			// TODO: if len(endpoints) == 0 queue a async listServiceEndpoints call
 			continue
 		}
@@ -133,19 +152,23 @@ func (r *roundRobin) syncOnce(lastNames map[string]struct{}, lastIndex uint64) (
 }
 
 func (r *roundRobin) syncLoop() {
+	defer r.wg.Done()
+
 	var lastIndex uint64
 	lastNames := make(map[string]struct{})
 
 	ticker := time.NewTicker(r.syncInterval)
 	defer ticker.Stop()
 
+	var current time.Time
 	for {
 		select {
 		case <-r.stopCh:
 			return
-		case <-ticker.C:
+		case current = <-ticker.C:
 			break
 		}
 		lastNames, lastIndex = r.syncOnce(lastNames, lastIndex)
+		r.logger.Debugf("RoundRobin Balancer Background Sync at %s, index[%d]", current.Format(time.UnixDate), lastIndex)
 	}
 }
